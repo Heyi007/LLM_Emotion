@@ -52,10 +52,16 @@ def parse_args() -> argparse.Namespace:
 @torch.no_grad()
 def story_means(model, tok, texts: list[str], layers: list[int],
                 skip: int, batch_size: int, max_tokens: int, device: str
-                ) -> dict[int, torch.Tensor]:
-    """返回 {layer: [N, H]} 的每条故事位置平均激活（float32）。"""
+                ) -> tuple[dict[int, torch.Tensor], dict[int, tuple[float, int]]]:
+    """返回 ({layer: [N, H] 每条故事位置平均激活}, {layer: (平方范数和, 有效 token 数)})。
+
+    第二组统计用于估计论文 Part 3 的归一化基准——该层残差流激活的平均
+    L2 范数（在全部有效 token 上汇总，float64 累加避免精度损失）。
+    """
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
     accum = {l: [] for l in layers}
+    norm_sq = {l: 0.0 for l in layers}
+    norm_n = {l: 0 for l in layers}
     length_dist: list[int] = []
     for start in range(0, len(texts), batch_size):
         batch = texts[start:start + batch_size]
@@ -66,6 +72,7 @@ def story_means(model, tok, texts: list[str], layers: list[int],
         length_dist += attn.sum(1).tolist()
         with LayerCapture(model, layers) as cap:
             model(input_ids=input_ids, attention_mask=attn, use_cache=False)
+            token_mask = attn.bool()                          # [B, L]
             for l in layers:
                 h = cap.get(l).float()                      # [B, L, H]
                 mask = attn.unsqueeze(-1).bool()
@@ -75,11 +82,17 @@ def story_means(model, tok, texts: list[str], layers: list[int],
                 summed = (h * keep).sum(1)                  # [B, H]
                 counts = keep.sum(1).clamp(min=1)
                 accum[l].append((summed / counts).cpu())
+                # 残差范数统计在全部有效 token 上（不做 skip 截断）
+                per_tok_sq = h.pow(2).sum(-1)               # [B, L]
+                norm_sq[l] += float((per_tok_sq * token_mask).sum().double())
+                norm_n[l] += int(token_mask.sum())
     stats = {"min": min(length_dist), "max": max(length_dist),
              "mean": round(float(np.mean(length_dist)), 1),
              "shorter_than_skip": sum(1 for n in length_dist if n <= skip)}
     print(f"[token] 故事长度分布 {stats}")
-    return {l: torch.cat(v, 0) for l, v in accum.items()}
+    means = {l: torch.cat(v, 0) for l, v in accum.items()}
+    norm_stats = {l: (norm_sq[l], norm_n[l]) for l in layers}
+    return means, norm_stats
 
 
 def neutral_projector(neutral_means: torch.Tensor, variance_th: float) -> torch.Tensor:
@@ -165,11 +178,13 @@ def main() -> None:
     model.eval()
 
     print("[forward] 情绪故事激活 ...")
-    emo_means = story_means(model, tok, all_stories, layers,
-                            args.skip_tokens, args.batch_size, args.max_tokens, device)
+    emo_means, emo_norm = story_means(model, tok, all_stories, layers,
+                                      args.skip_tokens, args.batch_size,
+                                      args.max_tokens, device)
     print("[forward] 中性对话激活 ...")
-    neu_means = story_means(model, tok, neutral_stories, layers,
-                            args.skip_tokens, args.batch_size, args.max_tokens, device)
+    neu_means, neu_norm = story_means(model, tok, neutral_stories, layers,
+                                      args.skip_tokens, args.batch_size,
+                                      args.max_tokens, device)
 
     bundle = {
         "model_dir": args.model_dir,
@@ -180,6 +195,8 @@ def main() -> None:
         "emotion_zh": ZH_BY_KEY,
         "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
         "probes": {}, "grand_mean": {}, "projector": {}, "probe_pca": {},
+        # Part 3 向量注入专用：未投影的原始情绪方向 [E,H] 与每层残差平均范数
+        "raw_probes": {}, "resid_norm": {},
     }
     report: dict = {}
     # 每条故事 -> 情绪索引，便于按情绪聚合
@@ -189,7 +206,12 @@ def main() -> None:
         by_emotion = {k: means[idx_by_key[k]].mean(0) for k in EMOTION_KEYS}
         grand = means.mean(0)
         projector = neutral_projector(neu_means[l], args.neutral_variance)
-        _, probes = build_probes(by_emotion, grand, projector)
+        raw, probes = build_probes(by_emotion, grand, projector)
+        # 论文 Part 3：注入强度按该层残差流平均 L2 范数归一化。
+        # 合并情绪故事与中性对话的全部有效 token 统计。
+        sq_sum = emo_norm[l][0] + neu_norm[l][0]
+        n_tok = emo_norm[l][1] + neu_norm[l][1]
+        resid_norm = float(np.sqrt(sq_sum / max(n_tok, 1)))
         # 验证：对每条故事激活做同样的中心化+投影
         story_vec = (means - grand) @ projector.t()
         report[f"layer_{l}"] = validate(story_vec, labels, probes)
@@ -203,6 +225,8 @@ def main() -> None:
         bundle["projector"][str(l)] = projector.cpu()
         bundle["probes"][str(l)] = probes.cpu()
         bundle["probe_pca"][str(l)] = pca
+        bundle["raw_probes"][str(l)] = raw.cpu()                    # [E,H] 未投影方向
+        bundle["resid_norm"][str(l)] = torch.tensor(resid_norm)     # 标量
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -217,7 +241,8 @@ def main() -> None:
         pca = r["probe_pca"]
         print(f"  layer {l:>2}: top1={r['top1_accuracy']:.3f} "
               f"diag={r['mean_diagonal_cos']:.3f} off={r['mean_offdiagonal_cos']:.3f} "
-              f"| valence r={pca['valence_corr']:.3f} arousal r={pca['arousal_corr']:.3f}")
+              f"| valence r={pca['valence_corr']:.3f} arousal r={pca['arousal_corr']:.3f} "
+              f"| resid_norm={float(bundle['resid_norm'][str(l)]):.2f}")
 
 
 if __name__ == "__main__":

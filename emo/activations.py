@@ -65,3 +65,39 @@ def capture_layers(model: nn.Module, layer_indexes: list[int]):
         yield cap
     finally:
         cap.__exit__(None, None, None)
+
+
+class SteeringHook:
+    """激活引导（activation steering，论文 Part 3）：在指定 decoder 层的
+    残差流输出上叠加一个固定向量 ``delta``。
+
+    ``delta`` 形状为 [H]，调用方需预先按
+    ``strength × 该层残差平均范数 × 单位情绪方向`` 缩放过；广播到 [B, L, H]
+    后对该次前向的所有 token 位置生效。
+
+    注意：若需与 LayerCapture 同时使用，必须先进入本 hook 再进入
+    LayerCapture——PyTorch 按注册顺序串联 forward hook，先注册者修改后的
+    输出会传给后注册者，这样情绪探针读到的就是注入后的激活。
+    """
+
+    def __init__(self, model: nn.Module, layer_index: int, delta: torch.Tensor):
+        self.layers = get_decoder_layers(model)
+        self.layer_index = layer_index
+        self.delta = delta
+        self._handle = None
+
+    def _hook(self, _module, _args, output):
+        if isinstance(output, (tuple, list)):
+            hidden = output[0]
+            hidden = hidden + self.delta.to(dtype=hidden.dtype, device=hidden.device)
+            return (hidden,) + tuple(output[1:])
+        return output + self.delta.to(dtype=output.dtype, device=output.device)
+
+    def __enter__(self) -> "SteeringHook":
+        self._handle = self.layers[self.layer_index].register_forward_hook(self._hook)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._handle is not None:
+            self._handle.remove()
+            self._handle = None

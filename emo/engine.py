@@ -16,13 +16,14 @@ calibration.pt 为 plain/prefill/gen 三个场景分别给出中性基线的均�
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from .activations import LayerCapture
+from .activations import LayerCapture, SteeringHook
 from .emotions import AROUSAL_BY_KEY, VALENCE_BY_KEY
 
 DEFAULT_PROBE = "data/probes/probes_qwen3.8-27b.pt"
@@ -55,6 +56,18 @@ class EmotionEngine:
         self.grand_mean = bundle["grand_mean"][str(self.layer)].to(self.device).float()
         self.projector = bundle["projector"][str(self.layer)].to(self.device).float()
         self.va_comps = bundle["probe_pca"][str(self.layer)]["components"].to(self.device).float()
+        # Part 3 注入向量：未做中性 PCA 投影的原始情绪方向（残差流原生坐标）。
+        # 注入量 = strength × 该层残差平均范数 × 单位方向，与论文归一化口径一致。
+        if "raw_probes" in bundle and str(self.layer) in bundle["raw_probes"]:
+            raw = bundle["raw_probes"][str(self.layer)].to(self.device).float()
+            self.steer_dirs = F.normalize(raw, dim=-1)              # [E,H] 单位方向
+            self.resid_norm = float(bundle["resid_norm"][str(self.layer)])
+            self.steering_ready = True
+        else:
+            # 旧探针包兜底：退化为投影单位探针；缺少残差范数基准，强度语义不同
+            self.steer_dirs = self.probes
+            self.resid_norm = 1.0
+            self.steering_ready = False
         self._cap: LayerCapture | None = None
         # 中性基线校准（可选，三场景）
         self.cal = None
@@ -115,7 +128,9 @@ class EmotionEngine:
     # —— 流式聊天：产出 (阶段标记, 数据) ——
     @torch.no_grad()
     def stream_chat(self, messages: list[dict], max_new_tokens: int = 256,
-                    temperature: float = 0.7, top_p: float = 0.8):
+                    temperature: float = 0.7, top_p: float = 0.8,
+                    steer_key: str | None = None,
+                    steer_strength: float = 0.0):
         input_ids = self.tok.apply_chat_template(
             messages, add_generation_prompt=True, return_tensors="pt",
             return_dict=True, enable_thinking=False).input_ids.to(self.device)
@@ -124,9 +139,22 @@ class EmotionEngine:
         all_score: list[torch.Tensor] = []
         sent_text = ""          # 已安全发送的解码前缀（不含未闭合多字节字符）
         finish_reason = "length"   # 默认因达到 max_new_tokens 而停，遇 eos 改为 stop
+        # 论文 Part 3：在探针层残差流上叠加情绪方向；负强度即沿反方向抑制该情绪。
+        # 先注册 SteeringHook 再注册 LayerCapture，使探针读数反映注入后激活。
+        steer_ctx = nullcontext()
+        steer_meta = None
+        if steer_key and abs(steer_strength) > 1e-9:
+            if steer_key not in self.keys:
+                raise KeyError(f"未知情绪 key: {steer_key}，可选 {self.keys}")
+            idx = self.keys.index(steer_key)
+            delta = self.steer_dirs[idx] * (steer_strength * self.resid_norm)
+            steer_ctx = SteeringHook(self.model, self.layer, delta.contiguous())
+            steer_meta = {"emotion": steer_key, "zh": self.zh[steer_key],
+                          "strength": steer_strength, "layer": self.layer,
+                          "resid_norm": round(self.resid_norm, 3)}
         cap = LayerCapture(self.model, [self.layer])
         self._cap = cap
-        with cap:
+        with steer_ctx, cap:
             # 1) prefill：助理起始位的“预备情绪”（对应论文 Assistant colon）
             out = self.model(input_ids=input_ids, use_cache=True)
             prepared = self._emotion_from_hidden(self._last_hidden(), stage="prefill")
@@ -188,4 +216,5 @@ class EmotionEngine:
         else:
             summary = {"top": [], "valence": 0.0, "arousal": 0.0, "intensity": 0.0}
         yield "done", {"text": full_text, "n_tokens": len(generated),
-                       "finish_reason": finish_reason, **summary}
+                       "finish_reason": finish_reason, "steering": steer_meta,
+                       **summary}

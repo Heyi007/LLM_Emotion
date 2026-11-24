@@ -42,6 +42,19 @@
     border-radius: 10px; padding: 0 8px; font: inherit; cursor: pointer; }
   .trunc { color: var(--warn); font-size: 12px; margin-top: 8px; display: block; }
   button:disabled { opacity: .45; cursor: not-allowed; }
+  .steer-row { border: 1px solid var(--line); border-radius: 10px; background: var(--panel2);
+    padding: 9px 11px; margin-top: 10px; }
+  .steer-head { margin-bottom: 7px; }
+  .steer-title { font-size: 12px; font-weight: 600; }
+  .steer-sub { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .steer-controls { display: flex; align-items: center; gap: 10px; }
+  .steer-controls select { padding: 5px 8px; max-width: 150px; }
+  .steer-controls input[type=range] { flex: 1; accent-color: var(--accent); margin: 0; }
+  .steer-val { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; color: var(--accent); }
+  .steer-hint { font-size: 11px; color: var(--muted); min-width: 148px; }
+  .steer-badge { display: inline-block; margin-top: 6px; padding: 2px 9px;
+    border-radius: 999px; font-size: 11px; background: #27406e; color: #9fc0ff; }
+  .steer-badge.neg { background: #4a2730; color: #ff9f9f; }
   .chips { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .chip { background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
     border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; }
@@ -86,6 +99,20 @@
       <span class="chip">我今天终于拿到了梦想公司的 offer，快恭喜我！</span>
       <span class="chip">等了三天的快递被告知丢件，客服还一直推诿。</span>
       <span class="chip">请问增值税普通发票怎么开？</span>
+    </div>
+    <div class="steer-row">
+      <div class="steer-head">
+        <span class="steer-title">情绪向量注入<span class="steer-sub">论文 Part 3 · 层 42 残差流 · 强度按残差范数归一 · 建议 ±0.05~±0.40，过强会退化</span></span>
+      </div>
+      <div class="steer-controls">
+        <select id="steerEmotion" title="选择要注入的情绪向量类型">
+          <option value="">不注入（关闭）</option>
+        </select>
+        <input type="range" id="steerStrength" min="-1" max="1" step="0.05" value="0"
+               title="注入强度：正值增强该情绪，负值沿反方向抑制">
+        <span class="steer-val" id="steerVal">0.00</span>
+        <span class="steer-hint" id="steerHint">选择情绪后，正向增强 / 负向抑制</span>
+      </div>
     </div>
     <div class="input-row">
       <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
@@ -162,8 +189,28 @@ function zWidth(z) { return Math.max(0, Math.min(z, BAR_CAP)) / BAR_CAP * 100; }
 
 async function loadMeta() {
   const r = await fetch("/api/emotions");
-  for (const e of await r.json()) meta[e.key] = e;
+  const list = await r.json();
+  const sel = $("steerEmotion");
+  for (const e of list) {
+    meta[e.key] = e;
+    const opt = document.createElement("option");
+    opt.value = e.key;
+    opt.textContent = `${e.zh}（${e.key}）`;
+    sel.appendChild(opt);
+  }
   renderFullList({});
+}
+
+function updateSteerUI() {
+  const key = $("steerEmotion").value;
+  const s = parseFloat($("steerStrength").value);
+  $("steerVal").textContent = (s >= 0 ? "+" : "") + s.toFixed(2);
+  const hint = $("steerHint");
+  if (!key || Math.abs(s) < 1e-9) {
+    hint.textContent = key ? "强度为 0，当前不注入" : "选择情绪后，正向增强 / 负向抑制";
+  } else {
+    hint.textContent = `${s > 0 ? "增强" : "抑制"} ${meta[key].zh}（${s > 0 ? "+" : ""}${s.toFixed(2)}）`;
+  }
 }
 async function checkHealth() {
   try {
@@ -285,7 +332,9 @@ async function send() {
     const resp = await fetch("/api/chat", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({messages: [{role: "user", content: text}],
-        max_new_tokens: parseInt($("maxTokens").value)})
+        max_new_tokens: parseInt($("maxTokens").value),
+        steer_emotion: $("steerEmotion").value || null,
+        steer_strength: parseFloat($("steerStrength").value)})
     });
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -312,6 +361,15 @@ async function send() {
         } else if (evt.kind === "done") {
           const d = evt.data;
           $("stage").textContent = d.finish_reason === "length" ? "已达长度上限（截断）" : "回复完成";
+          if (d.steering) {
+            const badge = document.createElement("span");
+            const neg = d.steering.strength < 0;
+            badge.className = "steer-badge" + (neg ? " neg" : "");
+            const sign = d.steering.strength >= 0 ? "+" : "";
+            badge.textContent = `向量注入：${neg ? "抑制 " : "增强 "}${d.steering.zh} ` +
+              `${sign}${d.steering.strength.toFixed(2)} · 层 ${d.steering.layer}`;
+            bodyEl.appendChild(badge);
+          }
           if (d.finish_reason === "length") {
             const note = document.createElement("span");
             note.className = "trunc";
@@ -343,6 +401,8 @@ inputEl.addEventListener("keydown", e => {
 document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
   inputEl.value = c.textContent; inputEl.focus();
 });
+$("steerEmotion").onchange = updateSteerUI;
+$("steerStrength").oninput = updateSteerUI;
 window.addEventListener("resize", renderTimeline);
 checkHealth();
 loadMeta();

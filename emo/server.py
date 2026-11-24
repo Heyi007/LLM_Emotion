@@ -51,12 +51,18 @@ class ChatRequest(BaseModel):
     max_new_tokens: int = Field(default=512, ge=1, le=2048)
     temperature: float = 0.7
     top_p: float = 0.8
+    # 论文 Part 3 向量注入：steer_emotion 为情绪 key（None=不注入），
+    # steer_strength 为相对残差平均范数的强度，负值=反向抑制该情绪
+    steer_emotion: str | None = None
+    steer_strength: float = Field(default=0.0, ge=-2.0, le=2.0)
 
 
 @app.get("/api/health")
 def health():
     return {"status": "ok" if engine is not None else "degraded",
             "layer": engine.layer if engine else None,
+            "steering_ready": bool(engine and engine.steering_ready),
+            "resid_norm": engine.resid_norm if engine else None,
             "error": load_error}
 
 
@@ -80,7 +86,9 @@ def chat(req: ChatRequest):
         try:
             for kind, data in engine.stream_chat(
                     req.messages, max_new_tokens=req.max_new_tokens,
-                    temperature=req.temperature, top_p=req.top_p):
+                    temperature=req.temperature, top_p=req.top_p,
+                    steer_key=req.steer_emotion,
+                    steer_strength=req.steer_strength):
                 yield "data: " + json.dumps(
                     {"kind": kind, "data": data}, ensure_ascii=False) + "\n\n"
         except Exception as exc:
