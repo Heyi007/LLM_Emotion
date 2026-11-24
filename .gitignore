@@ -1,0 +1,14 @@
+# 生成的探针与校准权重（由 emo.extract_probes / emo.calibrate 生成）
+# 其中 probes_qwen3.8-27b.pt 约 403MB，超过 GitHub 单文件 100MB 限制
+data/probes/*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 日志与临时文件
+*.log
+.DS_Store

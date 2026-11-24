@@ -1,0 +1,10 @@
+{
+  "_comment": "单条样本，用于快速核对 stories_zh.json 的记录格式。",
+  "emotional_record": {
+    "emotion": "excited",
+    "text": "录取通知弹出来的那一刻，他从椅子上弹了起来，攥着手机在房间里来回走，嘴里反复念着同一行字。"
+  },
+  "neutral_record": {
+    "text": "人员：水的化学式是什么？\n助手：水的化学式是 H2O，一个水分子由两个氢原子和一个氧原子组成。"
+  }
+}

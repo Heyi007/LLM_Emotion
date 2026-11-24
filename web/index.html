@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3.8-27B 实时情绪探针</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --panel2: #1f232e; --line: #2a2f3c;
+    --text: #e6e8ee; --muted: #8b91a1; --accent: #5b8def;
+    --pos: #34c98e; --neg: #ef6a6a; --neu: #7d8595; --warn: #e8b34b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px; height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 12px; background: var(--panel); }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  #status { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+  #status.on { background: var(--pos); }
+  main { flex: 1; display: grid; grid-template-columns: minmax(420px, 1.2fr) minmax(420px, 1fr);
+    gap: 14px; padding: 14px; min-height: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px; }
+  .chat { display: flex; flex-direction: column; min-height: 0; }
+  #messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+  .msg { max-width: 86%; padding: 10px 13px; border-radius: 10px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #27406e; }
+  .msg.assistant { align-self: flex-start; background: var(--panel2); }
+  .msg .tag { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .input-row { display: flex; gap: 8px; margin-top: 12px; }
+  textarea { flex: 1; resize: none; height: 64px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 10px; color: var(--text);
+    padding: 10px; font: inherit; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+    padding: 0 18px; font: inherit; cursor: pointer; }
+  select { background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 0 8px; font: inherit; cursor: pointer; }
+  .trunc { color: var(--warn); font-size: 12px; margin-top: 8px; display: block; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .chips { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; }
+  .chip:hover { color: var(--text); border-color: var(--accent); }
+  .right { overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+  .main-emo { display: flex; align-items: center; gap: 16px; }
+  .emo-dot { width: 64px; height: 64px; border-radius: 50%; flex: none;
+    display: flex; align-items: center; justify-content: center; font-size: 22px;
+    font-weight: 700; background: var(--panel2); border: 2px solid var(--line); }
+  .emo-meta .name { font-size: 20px; font-weight: 700; }
+  .emo-meta .hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .meter { margin-top: 10px; }
+  .meter .lab { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .meter .track { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; }
+  .meter .fill { height: 100%; border-radius: 3px; transition: width .15s linear; }
+  h3.sec { font-size: 13px; color: var(--muted); font-weight: 600; margin-bottom: 10px;
+    display: flex; justify-content: space-between; align-items: center; }
+  .bars { display: flex; flex-direction: column; gap: 7px; }
+  .bar-row { display: grid; grid-template-columns: 64px 1fr 52px; align-items: center; gap: 8px; font-size: 12px; }
+  .bar-row .zh { text-align: right; color: var(--text); }
+  .bar-row .track { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; }
+  .bar-row .fill { height: 100%; border-radius: 4px; transition: width .15s linear; }
+  .bar-row .val { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #va { width: 100%; height: 240px; }
+  #timeline { width: 100%; height: 96px; display: block; }
+  .prepared { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .prepared b { color: var(--text); }
+  .full-list { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <span id="status"></span>
+  <h1>Qwen3.8-27B 实时情绪探针</h1>
+  <span class="sub">残差流情绪向量 · 余弦探针 · 中性基线 z-score（层 42 / 64）</span>
+</header>
+<main>
+  <section class="card chat">
+    <div id="messages"></div>
+    <div class="chips">
+      <span class="chip">我今天终于拿到了梦想公司的 offer，快恭喜我！</span>
+      <span class="chip">等了三天的快递被告知丢件，客服还一直推诿。</span>
+      <span class="chip">请问增值税普通发票怎么开？</span>
+    </div>
+    <div class="input-row">
+      <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+      <select id="maxTokens" title="生成长度上限（token）">
+        <option value="256">256</option>
+        <option value="512">512</option>
+        <option value="1024" selected>1024</option>
+        <option value="2048">2048</option>
+      </select>
+      <button id="send">发送</button>
+    </div>
+  </section>
+
+  <section class="right">
+    <div class="card">
+      <h3 class="sec">当前主导情绪 <span id="stage" class="pill">等待输入</span></h3>
+      <div class="main-emo">
+        <div class="emo-dot" id="emoDot">—</div>
+        <div class="emo-meta">
+          <div class="name" id="emoName">中性</div>
+          <div class="hint" id="emoHint">强度（相对中性基线的最大 z 分数）</div>
+          <div class="meter"><div class="lab"><span>intensity</span><span id="intVal">0.00</span></div>
+            <div class="track"><div class="fill" id="intFill" style="width:0%;background:var(--neu)"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec">情绪 Top 8（z-score）</h3>
+      <div class="bars" id="topBars"></div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec">效价 — 唤醒 坐标（逐 token 轨迹）</h3>
+      <svg id="va" viewBox="0 0 400 240"></svg>
+    </div>
+
+    <div class="card">
+      <h3 class="sec">情绪强度时间线</h3>
+      <canvas id="timeline" height="96"></canvas>
+    </div>
+
+    <div class="card">
+      <h3 class="sec">预备情绪（助理起始位，对应论文 Assistant colon）</h3>
+      <div class="prepared" id="prepared">尚未生成</div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec">全部 28 种情绪</h3>
+      <div class="full-list" id="fullList"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const NEUTRAL_Z = 1.5;                 // 低于该强度视为中性
+const BAR_CAP = 4;                     // z=4 满格
+let meta = {};                         // key -> {zh, valence, arousal}
+let vaTrail = [];                      // {v, a}
+let timeline = [];                     // {i, intensity, valence}
+let streaming = false;
+
+const $ = id => document.getElementById(id);
+const messagesEl = $("messages"), inputEl = $("input"), sendBtn = $("send");
+
+function colorFor(key) {
+  const m = meta[key]; if (!m) return "var(--neu)";
+  if (m.valence > 0) return "var(--pos)";
+  if (m.valence < 0) return "var(--neg)";
+  return "var(--neu)";
+}
+function zWidth(z) { return Math.max(0, Math.min(z, BAR_CAP)) / BAR_CAP * 100; }
+
+async function loadMeta() {
+  const r = await fetch("/api/emotions");
+  for (const e of await r.json()) meta[e.key] = e;
+  renderFullList({});
+}
+async function checkHealth() {
+  try {
+    const r = await fetch("/api/health"); const j = await r.json();
+    $("status").classList.toggle("on", j.status === "ok");
+    if (j.status !== "ok") $("stage").textContent = "模型未就绪";
+  } catch { $("status").classList.remove("on"); }
+}
+
+function addMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = (role === "assistant" ? '<div class="tag">LLM 回复（情绪实时读数）</div>' : "") +
+                  '<span class="body"></span>';
+  div.querySelector(".body").textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div.querySelector(".body");
+}
+
+function renderTop(snap) {
+  const top = snap.top.slice(0, 8);
+  $("topBars").innerHTML = top.map(t => `
+    <div class="bar-row">
+      <div class="zh">${t.zh}</div>
+      <div class="track"><div class="fill" style="width:${zWidth(t.score)}%;background:${colorFor(t.key)}"></div></div>
+      <div class="val">${t.score.toFixed(2)}</div>
+    </div>`).join("");
+}
+function renderFullList(all) {
+  const keys = Object.keys(meta);
+  $("fullList").innerHTML = keys.map(k => {
+    const z = all[k] || 0;
+    return `<div class="bar-row">
+      <div class="zh">${meta[k].zh}</div>
+      <div class="track"><div class="fill" style="width:${zWidth(z)}%;background:${colorFor(k)}"></div></div>
+      <div class="val">${z.toFixed(2)}</div></div>`;
+  }).join("");
+}
+function renderMain(snap, stageText) {
+  const intense = snap.intensity >= NEUTRAL_Z;
+  const top = intense ? snap.top[0] : null;
+  $("emoName").textContent = top ? top.zh : "中性 / 平静";
+  $("emoHint").textContent = top ? `探针 ${top.key} · z=${top.score.toFixed(2)}` : "所有探针均接近中性基线";
+  $("emoDot").textContent = top ? top.zh.slice(0, 1) : "—";
+  $("emoDot").style.borderColor = top ? colorFor(top.key) : "var(--line)";
+  $("intVal").textContent = snap.intensity.toFixed(2);
+  const fill = $("intFill");
+  fill.style.width = Math.min(snap.intensity / BAR_CAP, 1) * 100 + "%";
+  fill.style.background = intense ? (top ? colorFor(top.key) : "var(--neu)") : "var(--neu)";
+  $("stage").textContent = stageText;
+}
+function renderVA() {
+  const W = 400, H = 240, pad = 34;
+  const X = v => pad + (v + 1) / 2 * (W - 2 * pad);
+  const Y = a => H - pad - (a + 1) / 2 * (H - 2 * pad);
+  let s = "";
+  s += `<rect x="${pad}" y="${pad}" width="${W-2*pad}" height="${H-2*pad}" fill="var(--panel2)" rx="8"/>`;
+  s += `<line x1="${X(0)}" y1="${pad}" x2="${X(0)}" y2="${H-pad}" stroke="var(--line)"/>`;
+  s += `<line x1="${pad}" y1="${Y(0)}" x2="${W-pad}" y2="${Y(0)}" stroke="var(--line)"/>`;
+  const ql = [["紧张 / 愤怒", -0.98, 0.92], ["兴奋 / 喜悦", 0.55, 0.92],
+              ["低落 / 绝望", -0.98, -0.86], ["放松 / 平静", 0.55, -0.86]];
+  for (const [t, v, a] of ql)
+    s += `<text x="${X(v)}" y="${Y(a)}" fill="var(--muted)" font-size="11">${t}</text>`;
+  s += `<text x="${W-pad}" y="${H-8}" fill="var(--muted)" font-size="11" text-anchor="end">效价 valence →</text>`;
+  s += `<text x="8" y="${pad+4}" fill="var(--muted)" font-size="11">↑唤醒</text>`;
+  const trail = vaTrail.slice(-24);
+  trail.forEach((p, i) => {
+    const op = 0.15 + 0.7 * (i + 1) / trail.length;
+    const r = i === trail.length - 1 ? 6 : 3.5;
+    s += `<circle cx="${X(p.v)}" cy="${Y(p.a)}" r="${r}" fill="var(--accent)" opacity="${op}"/>`;
+  });
+  $("va").innerHTML = s;
+}
+function renderTimeline() {
+  const cv = $("timeline"); const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = 96;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "#2a2f3c"; ctx.lineWidth = 1;
+  for (const g of [0.25, 0.5, 0.75]) {
+    ctx.beginPath(); ctx.moveTo(0, h * g); ctx.lineTo(w, h * g); ctx.stroke();
+  }
+  if (timeline.length < 2) return;
+  const n = timeline.length;
+  const px = i => n === 1 ? 0 : i / (n - 1) * w;
+  const py = z => h - Math.min(z / BAR_CAP, 1) * (h - 8) - 4;
+  ctx.beginPath();
+  timeline.forEach((p, i) => { i ? ctx.lineTo(px(i), py(p.intensity)) : ctx.moveTo(px(i), py(p.intensity)); });
+  ctx.strokeStyle = "#5b8def"; ctx.lineWidth = 2; ctx.stroke();
+  timeline.forEach((p, i) => {
+    ctx.beginPath(); ctx.arc(px(i), py(p.intensity), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = p.valence > 0 ? "#34c98e" : (p.valence < 0 ? "#ef6a6a" : "#7d8595");
+    ctx.fill();
+  });
+}
+function applySnap(snap, stageText, step) {
+  renderMain(snap, stageText);
+  renderTop(snap);
+  renderFullList(snap.all);
+  vaTrail.push({v: snap.valence, a: snap.arousal});
+  if (vaTrail.length > 120) vaTrail.shift();
+  renderVA();
+  timeline.push({i: step ?? timeline.length, intensity: snap.intensity, valence: snap.valence});
+  renderTimeline();
+}
+
+async function send() {
+  if (streaming) return;
+  const text = inputEl.value.trim();
+  if (!text) return;
+  inputEl.value = "";
+  addMsg("user", text);
+  const bodyEl = addMsg("assistant", "");
+  streaming = true; sendBtn.disabled = true;
+  vaTrail = []; timeline = [];
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({messages: [{role: "user", content: text}],
+        max_new_tokens: parseInt($("maxTokens").value)})
+    });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      const parts = buf.split("\n\n");
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data: ")) continue;
+        const evt = JSON.parse(line.slice(6));
+        if (evt.kind === "prepared") {
+          const d = evt.data;
+          $("prepared").innerHTML = d.top.slice(0, 4).map(t =>
+            `<b style="color:${colorFor(t.key)}">${t.zh}</b> ${t.score.toFixed(2)}`).join("　");
+          applySnap(d, "预备情绪", 0);
+        } else if (evt.kind === "token") {
+          bodyEl.textContent += evt.data.text;
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+          applySnap(evt.data.emotion, `生成中 #${evt.data.step + 1}`, evt.data.step + 1);
+        } else if (evt.kind === "done") {
+          const d = evt.data;
+          $("stage").textContent = d.finish_reason === "length" ? "已达长度上限（截断）" : "回复完成";
+          if (d.finish_reason === "length") {
+            const note = document.createElement("span");
+            note.className = "trunc";
+            note.textContent = `⚠ 已达到 ${d.n_tokens} token 长度上限，回复被截断，可调大右上角长度后重试`;
+            bodyEl.appendChild(note);
+          }
+          if (d.top.length) {
+            const sum = {top: d.top, all: {}, intensity: d.intensity,
+                         valence: d.valence, arousal: d.arousal};
+            renderMain(sum, "回复均值");
+            renderTop(sum);
+          }
+        } else if (evt.kind === "error") {
+          bodyEl.textContent += "\n[错误] " + evt.data.message;
+        }
+      }
+    }
+  } catch (e) {
+    bodyEl.textContent += "\n[请求失败] " + e;
+  } finally {
+    streaming = false; sendBtn.disabled = false;
+  }
+}
+
+sendBtn.onclick = send;
+inputEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+  inputEl.value = c.textContent; inputEl.focus();
+});
+window.addEventListener("resize", renderTimeline);
+checkHealth();
+loadMeta();
+</script>
+</body>
+</html>

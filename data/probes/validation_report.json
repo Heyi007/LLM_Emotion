@@ -1,0 +1,174 @@
+{
+  "layer_21": {
+    "top1_accuracy": 1.0,
+    "mean_diagonal_cos": 0.5989,
+    "mean_offdiagonal_cos": -0.0221,
+    "per_emotion": {
+      "excited": 1.0,
+      "happy": 1.0,
+      "surprised": 1.0,
+      "proud": 1.0,
+      "grateful": 1.0,
+      "hopeful": 1.0,
+      "content": 1.0,
+      "calm": 1.0,
+      "relaxed": 1.0,
+      "relieved": 1.0,
+      "loving": 1.0,
+      "angry": 1.0,
+      "afraid": 1.0,
+      "anxious": 1.0,
+      "panicked": 1.0,
+      "desperate": 1.0,
+      "disgusted": 1.0,
+      "jealous": 1.0,
+      "embarrassed": 1.0,
+      "hurt": 1.0,
+      "sad": 1.0,
+      "depressed": 1.0,
+      "lonely": 1.0,
+      "gloomy": 1.0,
+      "guilty": 1.0,
+      "weary": 1.0,
+      "bored": 1.0,
+      "puzzled": 1.0
+    },
+    "probe_pca": {
+      "valence_corr": 0.2199,
+      "arousal_corr": 0.1572,
+      "signs": [
+        1,
+        1
+      ]
+    }
+  },
+  "layer_31": {
+    "top1_accuracy": 1.0,
+    "mean_diagonal_cos": 0.6194,
+    "mean_offdiagonal_cos": -0.0228,
+    "per_emotion": {
+      "excited": 1.0,
+      "happy": 1.0,
+      "surprised": 1.0,
+      "proud": 1.0,
+      "grateful": 1.0,
+      "hopeful": 1.0,
+      "content": 1.0,
+      "calm": 1.0,
+      "relaxed": 1.0,
+      "relieved": 1.0,
+      "loving": 1.0,
+      "angry": 1.0,
+      "afraid": 1.0,
+      "anxious": 1.0,
+      "panicked": 1.0,
+      "desperate": 1.0,
+      "disgusted": 1.0,
+      "jealous": 1.0,
+      "embarrassed": 1.0,
+      "hurt": 1.0,
+      "sad": 1.0,
+      "depressed": 1.0,
+      "lonely": 1.0,
+      "gloomy": 1.0,
+      "guilty": 1.0,
+      "weary": 1.0,
+      "bored": 1.0,
+      "puzzled": 1.0
+    },
+    "probe_pca": {
+      "valence_corr": 0.278,
+      "arousal_corr": 0.0531,
+      "signs": [
+        1,
+        -1
+      ]
+    }
+  },
+  "layer_42": {
+    "top1_accuracy": 1.0,
+    "mean_diagonal_cos": 0.6285,
+    "mean_offdiagonal_cos": -0.0232,
+    "per_emotion": {
+      "excited": 1.0,
+      "happy": 1.0,
+      "surprised": 1.0,
+      "proud": 1.0,
+      "grateful": 1.0,
+      "hopeful": 1.0,
+      "content": 1.0,
+      "calm": 1.0,
+      "relaxed": 1.0,
+      "relieved": 1.0,
+      "loving": 1.0,
+      "angry": 1.0,
+      "afraid": 1.0,
+      "anxious": 1.0,
+      "panicked": 1.0,
+      "desperate": 1.0,
+      "disgusted": 1.0,
+      "jealous": 1.0,
+      "embarrassed": 1.0,
+      "hurt": 1.0,
+      "sad": 1.0,
+      "depressed": 1.0,
+      "lonely": 1.0,
+      "gloomy": 1.0,
+      "guilty": 1.0,
+      "weary": 1.0,
+      "bored": 1.0,
+      "puzzled": 1.0
+    },
+    "probe_pca": {
+      "valence_corr": 0.3381,
+      "arousal_corr": 0.1861,
+      "signs": [
+        1,
+        -1
+      ]
+    }
+  },
+  "layer_53": {
+    "top1_accuracy": 0.9911,
+    "mean_diagonal_cos": 0.6311,
+    "mean_offdiagonal_cos": -0.0232,
+    "per_emotion": {
+      "excited": 1.0,
+      "happy": 1.0,
+      "surprised": 1.0,
+      "proud": 1.0,
+      "grateful": 1.0,
+      "hopeful": 1.0,
+      "content": 1.0,
+      "calm": 1.0,
+      "relaxed": 1.0,
+      "relieved": 1.0,
+      "loving": 1.0,
+      "angry": 1.0,
+      "afraid": 1.0,
+      "anxious": 1.0,
+      "panicked": 1.0,
+      "desperate": 1.0,
+      "disgusted": 1.0,
+      "jealous": 1.0,
+      "embarrassed": 1.0,
+      "hurt": 1.0,
+      "sad": 1.0,
+      "depressed": 0.75,
+      "lonely": 1.0,
+      "gloomy": 1.0,
+      "guilty": 1.0,
+      "weary": 1.0,
+      "bored": 1.0,
+      "puzzled": 1.0
+    },
+    "probe_pca": {
+      "valence_corr": 0.3638,
+      "arousal_corr": 0.226,
+      "signs": [
+        1,
+        1
+      ]
+    }
+  }
+}
