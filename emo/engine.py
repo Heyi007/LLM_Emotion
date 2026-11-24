@@ -122,6 +122,7 @@ class EmotionEngine:
         eos = self.tok.eos_token_id
         generated: list[int] = []
         all_score: list[torch.Tensor] = []
+        sent_text = ""          # 已安全发送的解码前缀（不含未闭合多字节字符）
         finish_reason = "length"   # 默认因达到 max_new_tokens 而停，遇 eos 改为 stop
         cap = LayerCapture(self.model, [self.layer])
         self._cap = cap
@@ -158,12 +159,24 @@ class EmotionEngine:
                 past_kv = out.past_key_values
                 snap = self._emotion_from_hidden(self._last_hidden(), stage="gen")
                 all_score.append(torch.tensor([snap["all"][k] for k in self.keys]))
-                piece = self.tok.decode([nxt.item()], skip_special_tokens=True)
-                yield "token", {"text": piece, "emotion": snap, "step": step}
+                # 字节级 BPE 会把一个 emoji 拆成多个 token，逐 token 独立解码会让
+                # 残缺 UTF-8 字节变成 U+FFFD（乱码）。改为对累积序列整段解码，剥掉
+                # 结尾未闭合字符后按前缀差分，只发送已确认完整的部分。
+                cur_text = self.tok.decode(generated, skip_special_tokens=True)
+                stable = cur_text[:-1] if cur_text.endswith("�") else cur_text
+                piece = stable[len(sent_text):]
+                sent_text = stable
+                if piece:
+                    yield "token", {"text": piece, "emotion": snap, "step": step}
                 logits = out.logits[:, -1, :]
 
         # 4) 整段回复汇总（对逐 token z 分数取均值）
         full_text = self.tok.decode(generated, skip_special_tokens=True)
+        tail = full_text[len(sent_text):]   # 冲刷最后可能滞留的未闭合字符
+        if tail:
+            yield "token", {"text": tail,
+                            "emotion": self._emotion_from_hidden(self._last_hidden(), stage="gen"),
+                            "step": len(generated)}
         if all_score:
             mean_score = torch.stack(all_score).mean(0).to(self.device)
             order = torch.argsort(mean_score, descending=True)

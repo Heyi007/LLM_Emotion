@@ -229,7 +229,7 @@ function renderVA() {
   for (const [t, v, a] of ql)
     s += `<text x="${X(v)}" y="${Y(a)}" fill="var(--muted)" font-size="11">${t}</text>`;
   s += `<text x="${W-pad}" y="${H-8}" fill="var(--muted)" font-size="11" text-anchor="end">效价 valence →</text>`;
-  s += `<text x="8" y="${pad+4}" fill="var(--muted)" font-size="11">↑唤醒</text>`;
+  s += `<text x="${X(0)}" y="${pad - 12}" fill="var(--muted)" font-size="11" text-anchor="middle">↑唤醒</text>`;
   const trail = vaTrail.slice(-24);
   trail.forEach((p, i) => {
     const op = 0.15 + 0.7 * (i + 1) / trail.length;
